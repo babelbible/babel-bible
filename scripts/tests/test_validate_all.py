@@ -109,6 +109,101 @@ class ScanFullModuleDeclsTest(unittest.TestCase):
         theorems, axioms = validate_all.scan_full_module_decls(src)
         self.assertEqual((theorems, axioms), ([], []))
 
+    def test_modifier_permutations(self):
+        src = "\n".join([
+            "namespace Codex.Test",
+            "@[simp] theorem tagged : True := trivial",
+            "protected noncomputable theorem mixed : True := trivial",
+            "private axiom hidden_axiom : False",
+            "end Codex.Test",
+        ])
+        theorems, axioms = validate_all.scan_full_module_decls(src)
+        self.assertEqual(theorems, ["Codex.Test.tagged",
+                                    "Codex.Test.mixed"])
+        self.assertEqual(axioms, ["Codex.Test.hidden_axiom"])
+
+
+class StripLeanCommentsTest(unittest.TestCase):
+    def test_nested_block_comments(self):
+        # `theorem hidden` lives only inside a NESTED comment; a
+        # non-nested approximation ends the outer comment at the first
+        # `-/` and would then see the rest as real code (or vice versa).
+        src = ("/- outer /- nested theorem hidden : False := by sorry -/ -/\n"
+               "theorem real : True := trivial\n")
+        stripped = validate_all._strip_lean_comments(src)
+        theorems, axioms = validate_all.scan_full_module_decls(stripped)
+        self.assertEqual(theorems, ["real"])
+        self.assertNotIn("sorry", stripped)
+
+    def test_comment_markers_inside_strings_are_not_comments(self):
+        src = ('theorem s : True := trivial\n'
+               'theorem str : String := "a/-b--c"\n'
+               'theorem after : True := trivial\n')
+        stripped = validate_all._strip_lean_comments(src)
+        theorems, _ = validate_all.scan_full_module_decls(stripped)
+        self.assertEqual(theorems, ["s", "str", "after"])
+
+    def test_line_comments_stripped(self):
+        src = ("theorem real : True := trivial\n"
+               "-- theorem fake : False := by sorry\n")
+        stripped = validate_all._strip_lean_comments(src)
+        theorems, _ = validate_all.scan_full_module_decls(stripped)
+        self.assertEqual(theorems, ["real"])
+        self.assertNotIn("sorry", stripped)
+
+    def test_line_alignment_preserved(self):
+        src = ("/- multi\nline\ncomment -/\ntheorem real : True := trivial\n")
+        stripped = validate_all._strip_lean_comments(src)
+        self.assertEqual(stripped.splitlines()[3].strip(),
+                         "theorem real : True := trivial")
+
+
+class FailClosedScanTest(unittest.TestCase):
+    """Unsupported declaration syntax must raise, never silently skip."""
+
+    def test_unclassified_theorem_line_raises(self):
+        # `set_option ... in theorem foo` on one line: the declaration
+        # does not start the line, so the scanner cannot classify it.
+        with self.assertRaises(validate_all.LeanScanError):
+            validate_all.scan_full_module_decls(
+                "set_option maxHeartbeats 1000000 in "
+                "theorem hard : True := trivial\n")
+
+    def test_set_option_in_on_own_line_still_captures(self):
+        theorems, _ = validate_all.scan_full_module_decls(
+            "set_option maxHeartbeats 1000000 in\n"
+            "theorem hard : True := trivial\n")
+        self.assertEqual(theorems, ["hard"])
+
+    def test_unterminated_attribute_block_raises(self):
+        with self.assertRaises(validate_all.LeanScanError):
+            validate_all.scan_full_module_decls(
+                "@[simp\ntheorem tagged : True := trivial\n")
+
+    def test_plain_modules_still_scan(self):
+        theorems, axioms = validate_all.scan_full_module_decls(
+            "namespace N\ntheorem a : True := trivial\nlemma b : True := "
+            "trivial\nend N\n")
+        self.assertEqual(theorems, ["N.a", "N.b"])
+        self.assertEqual(axioms, [])
+
+    def test_full_gate_reports_unsupported_syntax(self):
+        root = fixtures.build_mini_repo()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        (root / "lean" / "Codex" / "Test" / "TestMod.lean").write_text(
+            "set_option maxHeartbeats 1000000 in theorem key_result : "
+            "True := trivial\n", encoding="utf-8")
+        bin_dir = root / "stubbin"
+        fixtures.write_stub_toolchain(bin_dir, {})
+        env = {**os.environ,
+               "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+        with mock.patch.dict(os.environ, env):
+            problems = validate_all.check_lean_contract(
+                root, [("content/00-test/01-ch/00.01.01-test-concept.md",
+                        dict(FULL_FM))])
+        self.assertTrue(any("unsupported declaration syntax" in p
+                            for p in problems), problems)
+
 
 class AxiomGateTest(unittest.TestCase):
     """End-to-end gate tests against the stub lake/lean toolchain."""
@@ -171,16 +266,20 @@ class AxiomGateTest(unittest.TestCase):
         self.assertTrue(any("no named theorem/lemma" in p and
                             "lean_theorem" in p for p in problems), problems)
 
-    def test_lean_theorem_frontmatter_narrows_probe(self):
+    def test_lean_theorem_does_not_shield_tainted_sibling(self):
+        # The designated headline is clean; a sibling theorem in the same
+        # module transitively depends on sorryAx. The probe set must be
+        # ALL public declarations plus the headline — never the headline
+        # alone — or a clean headline could hide a tainted sibling.
         self.module_path.write_text(
             "namespace Codex.Test\n"
             "theorem key_result : True := trivial\n"
             "theorem other : True := trivial\n"
             "end Codex.Test\n", encoding="utf-8")
         fm = dict(FULL_FM, lean_theorem="Codex.Test.other")
-        # key_result would report sorryAx if probed; only `other` is probed.
-        problems = self._run({"Codex.Test.key_result": ["sorryAx"]}, fm=fm)
-        self.assertEqual(problems, [])
+        problems = self._run({"Codex.Test.key_result":
+                              ["propext", "sorryAx"]}, fm=fm)
+        self.assertTrue(any("sorryAx" in p for p in problems), problems)
 
 
 if __name__ == "__main__":

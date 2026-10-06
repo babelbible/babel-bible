@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { getCollection } from "@neutron-build/core";
 import { sectionLabel, sectionOrder } from "../lib/sections";
+import { validateDeps } from "../lib/manifest-schema";
 
 export function head() {
   return {
@@ -41,6 +42,7 @@ export async function loader() {
       `dag: cannot read dependency manifest at ${depsPath}: ${(e as Error).message}`,
     );
   }
+  validateDeps(deps);
 
   const edges: Edge[] = deps.edges || [];
   const shipped: string[] = deps.shipped || [];

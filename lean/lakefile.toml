@@ -4,6 +4,10 @@ defaultTargets = ["Codex"]
 [[require]]
 name = "mathlib"
 scope = "leanprover-community"
+# Pinned to the exact commit lake-manifest.json resolves to; keeps the
+# build reproducible and makes `lake update` a no-op until deliberately
+# bumped here.
+rev = "c60be260d28a89760022e825aafbbd8a00f28ba1"
 
 [[lean_lib]]
 name = "Codex"

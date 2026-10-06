@@ -4,8 +4,7 @@
 import "../styles/global.css";
 import { setActiveMarkdownConfig } from "@neutron-build/core";
 import { codexMarkdownConfig, setShippedUnitIds } from "../lib/markdown-config.js";
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { collectShippedIds } from "../lib/shipped-ids.js";
 
 // Set the markdown config at SSR module-load time. Required because the SSR
 // worker runs in a separate process from the CLI's `neutron.config.ts`
@@ -13,33 +12,9 @@ import { join } from "node:path";
 // isn't shared across processes. Idempotent.
 setActiveMarkdownConfig(codexMarkdownConfig);
 
-// Same scan as neutron.config.ts. Re-run here so SSR worker has the
-// shipped-unit-id set used by the [NN.NN.NN] cross-ref renderer.
-function collectShippedIds(root: string): string[] {
-  const ids: string[] = [];
-  const walk = (dir: string) => {
-    let entries: string[];
-    try { entries = readdirSync(dir); } catch { return; }
-    for (const name of entries) {
-      const path = join(dir, name);
-      let s;
-      try { s = statSync(path); } catch { continue; }
-      if (s.isDirectory()) { walk(path); continue; }
-      if (!name.endsWith(".md")) continue;
-      let body: string;
-      try { body = readFileSync(path, "utf-8"); } catch { continue; }
-      const fmEnd = body.indexOf("\n---", 4);
-      const fm = fmEnd > 0 ? body.slice(4, fmEnd) : "";
-      const idMatch = /^id:\s*([\w.]+)\s*$/m.exec(fm);
-      const statusMatch = /^status:\s*(\w+)\s*$/m.exec(fm);
-      if (idMatch && statusMatch && statusMatch[1] === "shipped") {
-        ids.push(idMatch[1]);
-      }
-    }
-  };
-  walk(root);
-  return ids;
-}
+// Same data as neutron.config.ts (shared helper) — re-run here so the SSR
+// worker has the shipped-unit-id set used by the [NN.NN.NN] cross-ref
+// renderer.
 setShippedUnitIds(collectShippedIds("./src/content/units"));
 
 export const config = { hydrate: false };

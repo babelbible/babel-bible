@@ -7,7 +7,8 @@
     "dev": "neutron-ts dev",
     "data": "python3 ../scripts/build_lenses.py",
     "validate": "node scripts/validate-all.mjs",
-    "build": "node scripts/validate-all.mjs && neutron-ts build",
+    "validate:content": "node scripts/validate-all.mjs --content-only",
+    "build": "npm run validate:content && neutron-ts build",
     "preview": "neutron-ts preview"
   },
   "dependencies": {

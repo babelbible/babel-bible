@@ -7,11 +7,10 @@
 	file_server
 	encode gzip
 
+	# Fully static multipage site: unknown paths fall through to a real
+	# 404 (no SPA-style homepage rewrite — that masks broken links as
+	# soft-404s and breaks indexing/debugging).
 	try_files {path} {path}/index.html {path}.html
-	handle_errors {
-		rewrite * /index.html
-		file_server
-	}
 
 	header {
 		X-Content-Type-Options nosniff

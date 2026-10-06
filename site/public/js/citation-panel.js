@@ -1,5 +1,10 @@
 // Citation footnote panel — runs on every page that loads the layout.
 // Vanilla JS, zero deps, no Neutron-island fragility.
+//
+// CANONICAL IMPLEMENTATION: this file is the single source of truth for
+// citation-panel behavior and the SOURCE_META registry (there is no
+// TypeScript twin). scripts/tests/test_citation_panel.py guards its
+// metadata and the layout wiring.
 
 (function () {
   const SOURCE_META = {

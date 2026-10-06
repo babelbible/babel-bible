@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { validateConnections, validateDeps } from "../lib/manifest-schema";
 
 export function head() {
   return {
@@ -33,6 +34,17 @@ export async function loader() {
       `connections: cannot read manifest at ${PATH}: ${(e as Error).message}`,
     );
   }
+  const depsPath = resolve(import.meta.dirname, "../../../manifests/deps.json");
+  let deps: any;
+  try {
+    deps = JSON.parse(readFileSync(depsPath, "utf-8"));
+  } catch (e) {
+    throw new Error(
+      `connections: cannot read dependency manifest at ${depsPath}: ${(e as Error).message}`,
+    );
+  }
+  validateDeps(deps);
+  validateConnections(raw, deps);
   const connections: Connection[] = raw.connections || [];
   const types: string[] = raw.connection_types || [];
   const strengths: string[] = raw.strength_levels || [];

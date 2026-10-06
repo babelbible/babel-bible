@@ -44,18 +44,69 @@ AXIOM_NONE_RE = re.compile(r"^'([^']+)'\s+does not depend on any axioms",
 
 _NAMESPACE_RE = re.compile(r"^namespace\s+([A-Za-z_][\w.]*)")
 _END_RE = re.compile(r"^end(?:\s+([A-Za-z_][\w.]*))?")
+# Declaration modifiers may appear in any order/repetition before the
+# keyword; attributes must close on the same line (otherwise the scan
+# fails closed as unsupported syntax).
+_DECL_MODIFIER = r"(?:@\[[^\]\n]*\]\s*|(?:private|protected|noncomputable|unsafe|partial)\s+)*"
 _THEOREM_RE = re.compile(
-    r"^(?:@\[[^\]]*\]\s*)?(?:protected\s+|noncomputable\s+)*"
-    r"(?:theorem|lemma)\s+([A-Za-z_][\w'!?]*)")
+    _DECL_MODIFIER + r"(?:theorem|lemma)\s+([A-Za-z_][\w'!?]*)")
 _AXIOM_DECL_RE = re.compile(
-    r"^(?:@\[[^\]]*\]\s*)?(?:private\s+)?"
-    r"axiom\s+([A-Za-z_][\w'!?]*)")
+    _DECL_MODIFIER + r"axiom\s+([A-Za-z_][\w'!?]*)")
+_DECL_KEYWORD_RE = re.compile(r"\b(?:theorem|lemma|axiom)\b")
+
+
+class LeanScanError(Exception):
+    """The module source uses declaration syntax the scanner cannot
+    classify. The full gate fails closed on this: an unrecognised
+    theorem/lemma/axiom form must never be silently skipped."""
 
 
 def _strip_lean_comments(text: str) -> str:
-    text = re.sub(r"/-[\s\S]*?-/", "", text)  # block comments (non-nested approximation)
-    text = re.sub(r"--[^\n]*", "", text)      # line comments
-    return text
+    """Remove `--` line comments and nesting-aware `/- ... -/` block
+    comments. String literals are passed through untouched so comment
+    markers inside them cannot swallow real code (and code inside them
+    cannot hide declarations). Newlines inside block comments are kept
+    so the result stays line-aligned with the original source."""
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        pair = text[i:i + 2]
+        if pair == "--":
+            j = text.find("\n", i)
+            i = n if j == -1 else j  # keep the newline itself
+        elif pair == "/-":
+            start = i
+            depth = 1
+            i += 2
+            while i < n and depth > 0:
+                if text.startswith("/-", i):
+                    depth += 1
+                    i += 2
+                elif text.startswith("-/", i):
+                    depth -= 1
+                    i += 2
+                else:
+                    i += 1
+            # keep newlines so the result stays line-aligned with the
+            # original source
+            out.append("\n" * text[start:i].count("\n"))
+        elif ch == '"':
+            j = i + 1
+            while j < n:
+                if text[j] == "\\":
+                    j += 2
+                elif text[j] == '"' or text[j] == "\n":
+                    break
+                else:
+                    j += 1
+            j = min(j, n - 1)
+            out.append(text[i:j + 1])
+            i = j + 1
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out)
 
 
 def load_axiom_allowlist(repo_root: Path) -> set[str]:
@@ -71,14 +122,19 @@ def load_axiom_allowlist(repo_root: Path) -> set[str]:
     return allowed
 
 
-def scan_full_module_decls(source: str) -> tuple[list[str], list[str]]:
-    """Namespace-aware scan of a (comment-stripped) module source.
+def _scan_decls(source: str) -> tuple[list[str], list[str]]:
+    """Single-pass namespace-aware classification of a (comment-stripped)
+    module source. Returns (fully-qualified theorem/lemma names, axiom
+    declaration names). Raises LeanScanError on declaration syntax it
+    cannot classify — the caller fails closed rather than silently
+    skipping a potentially tainted declaration.
 
-    Returns (fully-qualified theorem/lemma names, axiom declaration names).
-    Tracks `namespace X.Y` / `end` nesting so probed names resolve. Private
-    declarations are skipped: they are invisible to an importing
-    `#print axioms` probe (their own `sorry` usage is caught by the
-    placeholder scan, and transitive taint surfaces through public callers).
+    Tracks `namespace X.Y` / `end` nesting so probed names resolve.
+    Private theorem/lemma declarations are skipped deliberately: they
+    are invisible to an importing `#print axioms` probe (their own
+    `sorry` usage is caught by the placeholder scan, and transitive
+    taint surfaces through public callers). Axioms are recorded even
+    when private.
     """
     theorems: list[str] = []
     axioms: list[str] = []
@@ -86,7 +142,7 @@ def scan_full_module_decls(source: str) -> tuple[list[str], list[str]]:
     for raw in source.splitlines():
         line = raw.strip()
         m = _NAMESPACE_RE.match(line)
-        if m:
+        if m and line == m.group(0):
             stack.append(m.group(1))
             continue
         m = _END_RE.match(line)
@@ -94,14 +150,27 @@ def scan_full_module_decls(source: str) -> tuple[list[str], list[str]]:
             n = len(m.group(1).split(".")) if m.group(1) else 1
             del stack[max(0, len(stack) - n):]
             continue
+        if line.startswith("@[") and "]" not in line:
+            raise LeanScanError(
+                f"multiline attribute block not supported: {raw!r}")
         m = _THEOREM_RE.match(line)
         if m:
-            theorems.append(".".join([*stack, m.group(1)]))
+            mods = line[:m.start(1)]
+            if not re.search(r"\bprivate\s", mods):
+                theorems.append(".".join([*stack, m.group(1)]))
             continue
         m = _AXIOM_DECL_RE.match(line)
         if m:
             axioms.append(".".join([*stack, m.group(1)]))
+            continue
+        if _DECL_KEYWORD_RE.search(line):
+            raise LeanScanError(
+                f"unsupported declaration syntax: {raw!r}")
     return theorems, axioms
+
+
+def scan_full_module_decls(source: str) -> tuple[list[str], list[str]]:
+    return _scan_decls(source)
 
 
 def parse_axioms_output(text: str) -> dict[str, list[str]]:
@@ -151,13 +220,14 @@ def check_lean_contract(repo_root: Path,
       puts every `full`/`partial` module in the aggregate build closure;
     - for `lean_status: full` units, additionally scans the module source
       for proof placeholders (`sorry` / `admit` / `sorryAx`) and custom
-      `axiom` declarations, and probes each full unit's primary theorem
-      (frontmatter `lean_theorem`, else every named theorem/lemma in the
-      module) with `#print axioms`: `sorryAx` and any axiom outside the
+      `axiom` declarations, and probes every public theorem/lemma in the
+      module (plus the frontmatter-designated `lean_theorem` headline)
+      with `#print axioms`: `sorryAx` and any axiom outside the
       foundational allowlist (propext, Classical.choice, Quot.sound, plus
-      lean/AXIOM_ALLOWLIST.txt) fails. This catches sorry and custom
-      axioms entering transitively through imported theorems;
-      `partial` units need only be in the closure.
+      lean/AXIOM_ALLOWLIST.txt) fails. The headline is never a whitelist:
+      a clean designated theorem cannot shield a tainted sibling. This
+      catches sorry and custom axioms entering transitively through
+      imported theorems; `partial` units need only be in the closure.
 
     When no lake toolchain is on PATH this is FATAL in normal (shipping)
     mode: "Ready to ship." must never be printed without the Lean gate
@@ -204,23 +274,32 @@ def check_lean_contract(repo_root: Path,
                 f"{rel}: lean_status: full but module {module} contains "
                 f"proof placeholder(s): {', '.join(hits)}")
 
-        # 2. Custom `axiom` declarations in the module itself (unless
+        # 2. Scan declarations. Fail closed on unsupported syntax.
+        try:
+            named, axiom_decls = _scan_decls(stripped)
+        except LeanScanError as exc:
+            problems.append(
+                f"{rel}: lean_status: full but module {module} uses "
+                f"{exc}")
+            continue
+
+        # 3. Custom `axiom` declarations in the module itself (unless
         #    explicitly allowlisted).
-        _, axiom_decls = scan_full_module_decls(stripped)
         bad_decls = [a for a in axiom_decls if a not in allowlist]
         if bad_decls:
             problems.append(
                 f"{rel}: lean_status: full but module {module} declares "
                 f"axiom(s): {', '.join(bad_decls)}")
 
-        # 3. Axiom-dependency probe of the primary theorem(s): catches
-        #    `sorryAx` and custom/non-allowlisted axioms entering
-        #    transitively through imported theorems. The probe set is the
-        #    frontmatter `lean_theorem` when recorded, else every named
-        #    theorem/lemma in the module.
+        # 4. Axiom-dependency probe: catches `sorryAx` and custom/
+        #    non-allowlisted axioms entering transitively through
+        #    imported theorems. Every public theorem/lemma in the module
+        #    is probed; the frontmatter `lean_theorem` is a designated
+        #    headline added to the probe set, never a whitelist — a
+        #    clean headline must not be able to shield a tainted sibling
+        #    declaration.
         explicit = str(fm.get("lean_theorem", "")).strip()
-        named, _ = scan_full_module_decls(stripped)
-        probe_names = [explicit] if explicit else named
+        probe_names = sorted(set(named) | ({explicit} if explicit else set()))
         if not probe_names:
             problems.append(
                 f"{rel}: lean_status: full but module {module} declares no "
