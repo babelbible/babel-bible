@@ -13,10 +13,13 @@
 import type { TokenizerExtension, RendererExtension } from "marked";
 import { Marked } from "marked";
 import markedKatex from "marked-katex-extension";
+import { sanitizeHtmlToken } from "./sanitize.js";
 
 // Local katex-enabled inline renderer for math nested inside opaque HTML
 // blocks (e.g. `<li>$x$</li>`). Kept local to avoid a circular import with
 // `inline-math.ts` (which now consumes `preprocessMath` from this module).
+// Raw HTML in the input is sanitized with the shared allowlist — this is
+// one of the sinks for citation text (`[ref: …]`) and html-item bodies.
 const _inlineMd = new Marked({ gfm: true });
 _inlineMd.use(
   markedKatex({
@@ -26,6 +29,13 @@ _inlineMd.use(
     nonStandard: true,
   }) as any,
 );
+_inlineMd.use({
+  renderer: {
+    html(tokenOrText: any) {
+      return sanitizeHtmlToken(tokenOrText);
+    },
+  },
+});
 function renderInlineLocal(s: string): string {
   if (!s) return "";
   return (_inlineMd.parseInline(s) as string).trim();
@@ -533,6 +543,13 @@ export const codexMarkedExtensions = {
     unitRefRenderer,
   ],
   renderer: {
+    // Raw HTML from unit markdown source is filtered through the shared
+    // allowlist sanitizer before it reaches the page (C-01): scripts,
+    // event handlers, and unsafe URLs are stripped/escaped, while the
+    // structural exercise markup and pre-rendered KaTeX survive.
+    html(tokenOrText: any) {
+      return sanitizeHtmlToken(tokenOrText);
+    },
     image(token: MarkedImageToken) {
       if (HIDE_IMAGES) return "";
       const { href, title, text } = token;

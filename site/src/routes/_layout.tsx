@@ -14,8 +14,9 @@ setActiveMarkdownConfig(codexMarkdownConfig);
 
 // Same data as neutron.config.ts (shared helper) — re-run here so the SSR
 // worker has the shipped-unit-id set used by the [NN.NN.NN] cross-ref
-// renderer.
-setShippedUnitIds(collectShippedIds("./src/content/units"));
+// renderer. The root is resolved from the module location, so this works
+// regardless of the worker's CWD, and fails loudly if content/ is missing.
+setShippedUnitIds(collectShippedIds());
 
 export const config = { hydrate: false };
 

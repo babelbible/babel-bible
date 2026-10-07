@@ -4,12 +4,21 @@ import { getCollection } from "@neutron-build/core";
 import { published } from "../../lib/published";
 import { Marked } from "marked";
 import markedKatex from "marked-katex-extension";
+import { sanitizeHtmlToken } from "../../lib/sanitize.js";
 
 // Inline-math renderer for catalog text fields. Catalog entries authored in
 // markdown with `$...$` LaTeX must be rendered through KaTeX so the math
-// shows as glyphs, not literal TeX source.
+// shows as glyphs, not literal TeX source. Raw HTML is sanitized with the
+// shared allowlist (fields land in dangerouslySetInnerHTML).
 const _md = new Marked({ gfm: true });
 _md.use(markedKatex({ throwOnError: false, output: "html", strict: "ignore", nonStandard: true }) as any);
+_md.use({
+  renderer: {
+    html(tokenOrText: any) {
+      return sanitizeHtmlToken(tokenOrText);
+    },
+  },
+});
 function renderInline(s: string | undefined): string {
   if (!s) return "";
   // parseInline returns a string in marked v18; strip a trailing newline.

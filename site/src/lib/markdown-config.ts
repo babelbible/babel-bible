@@ -7,6 +7,7 @@ import { createDirectives, presetDirectiveConfigs } from "marked-directive";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { codexMarkedExtensions, setShippedUnitIds } from "./marked-codex.js";
+import { trustedKatexUrl } from "./sanitize.js";
 
 // We compute the shipped-unit-id set lazily so we don't run filesystem reads
 // in code paths that don't need it. The CLI sets this explicitly during
@@ -40,6 +41,9 @@ export const codexMarkdownConfig = {
     codexMarkedExtensions,
   ],
   remarkPlugins: [remarkMath],
-  rehypePlugins: [[rehypeKatex, { strict: "ignore", trust: true }]] as any[],
+  // `trust` gates KaTeX's potentially dangerous commands (\href, \url,
+  // \includegraphics). A bare `true` would render `\href{javascript:…}`;
+  // the callback honors absolute http(s)/mailto URLs only (C-01).
+  rehypePlugins: [[rehypeKatex, { strict: "ignore", trust: trustedKatexUrl }]] as any[],
   syntaxHighlight: { theme: "github-dark" as const },
 };

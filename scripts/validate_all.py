@@ -44,6 +44,11 @@ AXIOM_NONE_RE = re.compile(r"^'([^']+)'\s+does not depend on any axioms",
 
 _NAMESPACE_RE = re.compile(r"^namespace\s+([A-Za-z_][\w.]*)")
 _END_RE = re.compile(r"^end(?:\s+([A-Za-z_][\w.]*))?")
+# `section [Name]` (incl. `noncomputable section`) and `mutual` open
+# anonymous scopes: a bare `end` closes them without touching the
+# enclosing namespace.
+_ANON_SCOPE_RE = re.compile(r"^(?:noncomputable\s+)?section"
+                            r"(?:\s+[A-Za-z_][\w'!?]*)?$|^mutual$")
 # Declaration modifiers may appear in any order/repetition before the
 # keyword; attributes must close on the same line (otherwise the scan
 # fails closed as unsupported syntax).
@@ -109,6 +114,37 @@ def _strip_lean_comments(text: str) -> str:
     return "".join(out)
 
 
+def _blank_string_contents(text: str) -> str:
+    """Replace string-literal contents with nothing, keeping the closing
+    delimiter, so declaration keywords in prose strings (e.g. `"the
+    theorem is named after Gauss"`) cannot trip the fail-closed
+    "unsupported declaration syntax" path. Uses the same string model as
+    `_strip_lean_comments` (no newline inside a literal; backslash
+    escapes), which was verified not to desync on legal Lean. Line
+    structure is preserved, so this is safe to run on comment-stripped
+    or raw source alike."""
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch == '"':
+            j = i + 1
+            while j < n:
+                if text[j] == "\\":
+                    j += 2
+                elif text[j] == '"' or text[j] == "\n":
+                    break
+                else:
+                    j += 1
+            j = min(j, n - 1)
+            out.append(text[j])
+            i = j + 1
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out)
+
+
 def load_axiom_allowlist(repo_root: Path) -> set[str]:
     """Foundational Lean axioms plus any names listed in
     lean/AXIOM_ALLOWLIST.txt (one per line, `#` comments)."""
@@ -130,6 +166,11 @@ def _scan_decls(source: str) -> tuple[list[str], list[str]]:
     skipping a potentially tainted declaration.
 
     Tracks `namespace X.Y` / `end` nesting so probed names resolve.
+    Each `namespace`, `section`, and `mutual` command opens exactly one
+    scope; each `end` line (bare or named) closes exactly one scope —
+    the segment count of `end A.B` is deliberately ignored, because one
+    `namespace A.B` command pushed one frame. Sections/mutuals are
+    anonymous markers that never qualify a declaration name.
     Private theorem/lemma declarations are skipped deliberately: they
     are invisible to an importing `#print axioms` probe (their own
     `sorry` usage is caught by the placeholder scan, and transitive
@@ -138,17 +179,21 @@ def _scan_decls(source: str) -> tuple[list[str], list[str]]:
     """
     theorems: list[str] = []
     axioms: list[str] = []
-    stack: list[str] = []
+    stack: list[str | None] = []
+    source = _blank_string_contents(source)
     for raw in source.splitlines():
         line = raw.strip()
         m = _NAMESPACE_RE.match(line)
         if m and line == m.group(0):
             stack.append(m.group(1))
             continue
+        if _ANON_SCOPE_RE.match(line):
+            stack.append(None)
+            continue
         m = _END_RE.match(line)
         if m and line == m.group(0):
-            n = len(m.group(1).split(".")) if m.group(1) else 1
-            del stack[max(0, len(stack) - n):]
+            if stack:
+                stack.pop()
             continue
         if line.startswith("@[") and "]" not in line:
             raise LeanScanError(
@@ -157,11 +202,15 @@ def _scan_decls(source: str) -> tuple[list[str], list[str]]:
         if m:
             mods = line[:m.start(1)]
             if not re.search(r"\bprivate\s", mods):
-                theorems.append(".".join([*stack, m.group(1)]))
+                prefix = ".".join(s for s in stack if s)
+                theorems.append(
+                    f"{prefix}.{m.group(1)}" if prefix else m.group(1))
             continue
         m = _AXIOM_DECL_RE.match(line)
         if m:
-            axioms.append(".".join([*stack, m.group(1)]))
+            prefix = ".".join(s for s in stack if s)
+            axioms.append(f"{prefix}.{m.group(1)}" if prefix
+                          else m.group(1))
             continue
         if _DECL_KEYWORD_RE.search(line):
             raise LeanScanError(

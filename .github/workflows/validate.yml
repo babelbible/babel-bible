@@ -45,7 +45,12 @@ jobs:
           python3 scripts/check_codex_imports.py --fix
           python3 scripts/build_lenses.py
           python3 scripts/integrate_unit.py --regenerate
-          git diff --exit-code
+          python3 scripts/build_production_plan.py
+          # `git add -A` first so NEW artifacts (untracked files) are
+          # caught too — `git diff` alone is blind to them. Covers all
+          # four committed generators, including the production plan.
+          git add -A
+          git diff --cached --exit-code
 
       - name: Validator unit tests
         run: python3 -m unittest discover -s scripts/tests
@@ -83,7 +88,12 @@ jobs:
       - name: Assert build outputs
         run: |
           test -f site/dist/index.html
+          test -f site/dist/404.html
           test -n "$(find site/dist/u -name '*.html' -print -quit)"
           test -n "$(find site/dist/specs -name '*.html' -print -quit)"
           test -n "$(find site/dist/dag -name '*.html' -print -quit)"
           test -n "$(find site/dist/connections -name '*.html' -print -quit)"
+          # Shipped-unit ids must have resolved: at least one unit page
+          # carries a real cross-reference link (not an all-"pending"
+          # badge regression from a fail-open content scan).
+          grep -rql 'class="unit-ref" href="/u/' site/dist/u/

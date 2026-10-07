@@ -2,7 +2,7 @@ import { defineConfig, adapterStatic, setActiveMarkdownConfig } from "@neutron-b
 import { codexMarkdownConfig, setShippedUnitIds } from "./src/lib/markdown-config.js";
 import { collectShippedIds } from "./src/lib/shipped-ids.js";
 
-setShippedUnitIds(collectShippedIds("./src/content/units"));
+setShippedUnitIds(collectShippedIds());
 setActiveMarkdownConfig(codexMarkdownConfig);
 
 export default defineConfig({

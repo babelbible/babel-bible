@@ -122,6 +122,72 @@ class ScanFullModuleDeclsTest(unittest.TestCase):
                                     "Codex.Test.mixed"])
         self.assertEqual(axioms, ["Codex.Test.hidden_axiom"])
 
+    def test_nested_namespace_end_pops_one_frame(self):
+        # C-02: `end Codex.Outer.Inner` closes ONE scope (the one the
+        # single `namespace Codex.Outer.Inner` command opened), not one
+        # per dotted segment — otherwise t2 loses its qualifier.
+        src = "\n".join([
+            "namespace Codex.Outer",
+            "namespace Codex.Outer.Inner",
+            "theorem t1 : True := trivial",
+            "end Codex.Outer.Inner",
+            "theorem t2 : True := trivial",
+            "end Codex.Outer",
+        ])
+        theorems, _ = validate_all.scan_full_module_decls(src)
+        self.assertEqual(theorems,
+                         ["Codex.Outer.Codex.Outer.Inner.t1",
+                          "Codex.Outer.t2"])
+
+    def test_section_end_does_not_pop_namespace(self):
+        # C-02: a bare `end` closing a `section` must not pop the
+        # enclosing namespace frame.
+        src = "\n".join([
+            "namespace Codex.N",
+            "section",
+            "theorem s1 : True := trivial",
+            "end",
+            "theorem s2 : True := trivial",
+            "end Codex.N",
+        ])
+        theorems, _ = validate_all.scan_full_module_decls(src)
+        self.assertEqual(theorems, ["Codex.N.s1", "Codex.N.s2"])
+
+    def test_mutual_end_does_not_pop_namespace(self):
+        # C-02: same guard for `mutual … end`.
+        src = "\n".join([
+            "namespace Codex.M",
+            "mutual",
+            "theorem s1 : True := trivial",
+            "end",
+            "theorem s2 : True := trivial",
+            "end Codex.M",
+        ])
+        theorems, _ = validate_all.scan_full_module_decls(src)
+        self.assertEqual(theorems, ["Codex.M.s1", "Codex.M.s2"])
+
+    def test_dotted_end_single_namespace_empties_stack(self):
+        # Sequential `namespace X.Y … end X.Y` (the only real-corpus
+        # shape) still empties the stack: decls after it are bare.
+        src = ("namespace A.B\n"
+               "theorem t : True := trivial\n"
+               "end A.B\n"
+               "theorem u : True := trivial\n")
+        theorems, _ = validate_all.scan_full_module_decls(src)
+        self.assertEqual(theorems, ["A.B.t", "u"])
+
+    def test_named_section(self):
+        src = "\n".join([
+            "namespace Codex.S",
+            "section Named",
+            "theorem s1 : True := trivial",
+            "end Named",
+            "theorem s2 : True := trivial",
+            "end Codex.S",
+        ])
+        theorems, _ = validate_all.scan_full_module_decls(src)
+        self.assertEqual(theorems, ["Codex.S.s1", "Codex.S.s2"])
+
 
 class StripLeanCommentsTest(unittest.TestCase):
     def test_nested_block_comments(self):
@@ -179,6 +245,33 @@ class FailClosedScanTest(unittest.TestCase):
         with self.assertRaises(validate_all.LeanScanError):
             validate_all.scan_full_module_decls(
                 "@[simp\ntheorem tagged : True := trivial\n")
+
+    def test_string_literal_prose_does_not_raise(self):
+        # C-03: decl keywords inside string literals are prose, not
+        # declarations — the scan must not fail closed on them.
+        theorems, axioms = validate_all.scan_full_module_decls(
+            'def desc : String := "the theorem is named after Gauss"\n'
+            'theorem real_one : True := trivial\n')
+        self.assertEqual((theorems, axioms), (["real_one"], []))
+
+    def test_string_with_comment_marker_then_real_comment(self):
+        # C-03 regression guard: blanking string contents must not
+        # disturb the comment-stripping order — a `/-` inside a string
+        # stays inert, and a real `--` comment afterwards is stripped.
+        src = ('def s : String := "pre /- post"\n'
+               '-- theorem commented_out : False := by sorry\n'
+               'theorem after : True := trivial\n')
+        stripped = validate_all._strip_lean_comments(src)
+        theorems, _ = validate_all.scan_full_module_decls(stripped)
+        self.assertEqual(theorems, ["after"])
+
+    def test_string_blanking_keeps_same_line_decls(self):
+        # A string on a line with real code: the trailing declaration on
+        # a LATER line is unaffected (strings cannot span newlines).
+        src = ('def a : String := "lemma inside"\n'
+               'lemma real : True := trivial\n')
+        theorems, _ = validate_all.scan_full_module_decls(src)
+        self.assertEqual(theorems, ["real"])
 
     def test_plain_modules_still_scan(self):
         theorems, axioms = validate_all.scan_full_module_decls(

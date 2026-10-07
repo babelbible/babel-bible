@@ -9,6 +9,7 @@
 import { Marked } from "marked";
 import markedKatex from "marked-katex-extension";
 import { preprocessMath } from "./marked-codex";
+import { sanitizeHtmlToken } from "./sanitize.js";
 
 const _md = new Marked({ gfm: true });
 _md.use(
@@ -19,6 +20,16 @@ _md.use(
     nonStandard: true,
   }) as any,
 );
+// These fields land in `dangerouslySetInnerHTML` (titles, tier anchors,
+// citations, Mathlib-gap blocks) — sanitize raw HTML with the shared
+// allowlist so a tainted frontmatter value cannot inject markup.
+_md.use({
+  renderer: {
+    html(tokenOrText: any) {
+      return sanitizeHtmlToken(tokenOrText);
+    },
+  },
+});
 
 export function renderInline(s: string | undefined | null): string {
   if (!s) return "";

@@ -29,7 +29,7 @@ companion site (built with Neutron, deployed via Teploy) lives at babelbible.org
 - **Site:** live at babelbible.org (Neutron + Vite, deployed via Teploy to an OVH VPS).
 - **Production status:** the Tier A/B/C campaign (math spines 1–12 + Tier C non-math gap-fills) is **complete**. Remaining work is discretionary depth/curation — the live queue lives in `plans/expansion/FINALIZATION_PLAN.md` (status table §2) and `plans/expansion/DEPTH_QUALITY_AUDIT.md` §8.
 - **Known quality gap:** ~98% of units cite via `TODO_REF` placeholders. Resolution path: acquire the ~13 highest-leverage sources in `docs/catalogs/NEED_TO_SOURCE.md` (Tyler-gated), then run a citation-resolution pass.
-- **Framework note:** a Neutron build OOM was fixed via lazy markdown rendering (branch `fix/content-lazy-render-oom` in the Neutron repo, commits `0acf360` + `1206c7a`; not yet merged to Neutron `main` — merge before relying on it elsewhere). Heap fell from ~12.3 GB peak to ~1.3 GB.
+- **Framework note:** a Neutron build OOM was fixed via lazy markdown rendering (formerly branch `fix/content-lazy-render-oom`, commits `0acf360` + `1206c7a` — now on Neutron `main` patch-id-identical with follow-ups; verified 2026-10-06). Heap fell from ~12.3 GB peak to ~1.3 GB.
 
 ## Public repo
 

@@ -6,13 +6,27 @@
 // renderer can render real links instead of pending badges.
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
-export function collectShippedIds(root: string): string[] {
+// Resolved from this module's location, NOT the process CWD: the CLI and
+// the SSR worker may be started from different directories, and a
+// CWD-relative miss used to fail OPEN (empty id set → every cross-ref
+// silently rendered as a "pending" badge).
+export const CONTENT_UNITS_DIR = resolve(import.meta.dirname, "../../../content");
+
+export function collectShippedIds(root: string = CONTENT_UNITS_DIR): string[] {
   const ids: string[] = [];
   const walk = (dir: string) => {
     let entries: string[];
-    try { entries = readdirSync(dir); } catch { return; }
+    try {
+      entries = readdirSync(dir);
+    } catch (e) {
+      // Fail LOUD: a missing/unreadable content root is a build wiring
+      // error, not an empty curriculum.
+      throw new Error(
+        `collectShippedIds: cannot read content directory ${dir}: ${e}`,
+      );
+    }
     for (const name of entries) {
       const path = join(dir, name);
       let s;

@@ -12,10 +12,25 @@
 	# soft-404s and breaks indexing/debugging).
 	try_files {path} {path}/index.html {path}.html
 
+	# Branded error page that keeps the true status code (the response
+	# is still a real 404 — only the body is our page, not Caddy's
+	# unbranded default).
+	handle_errors {
+		rewrite * /404.html
+		file_server
+	}
+
 	header {
 		X-Content-Type-Options nosniff
 		X-Frame-Options SAMEORIGIN
 		Referrer-Policy strict-origin-when-cross-origin
+		# Defense-in-depth behind the markdown sanitizer: same-origin
+		# resources only. `script-src … 'unsafe-inline'` is required by
+		# the layout's tiny inline theme/tier/filter scripts; removing
+		# those (external files or hashes) is the follow-up that lets
+		# this tighten. `style-src … 'unsafe-inline'` covers KaTeX's
+		# inline layout attributes.
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'"
 		-Server
 	}
 
